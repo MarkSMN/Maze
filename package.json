@@ -1,0 +1,35 @@
+{
+  "name": "orthogonal-path-generator",
+  "version": "1.0.0",
+  "description": "A 3D generator for orthogonal paths with 90-degree turns, exportable as STL files",
+  "main": "index.html",
+  "scripts": {
+    "start": "serve .",
+    "dev": "serve ."
+  },
+  "keywords": [
+    "three.js",
+    "3D",
+    "orthogonal",
+    "path",
+    "generator",
+    "stl",
+    "export"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "three": "^0.158.0"
+  },
+  "devDependencies": {
+    "serve": "^14.2.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourusername/orthogonal-path-generator.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/orthogonal-path-generator/issues"
+  },
+  "homepage": "https://github.com/yourusername/orthogonal-path-generator#readme"
+}
