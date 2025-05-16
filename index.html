@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Orthogonal 3D Path Generator</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            font-family: Arial, sans-serif;
+            pointer-events: none;
+        }
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 5px;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        button, input, select {
+            margin: 5px;
+            padding: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">Orthogonal 3D Path Generator</div>
+    <div id="controls">
+        <div>
+            <label for="pathSegments">Number of Segments:</label>
+            <input type="range" id="pathSegments" min="10" max="100" value="30" />
+            <span id="segmentsValue">30</span>
+        </div>
+        <div>
+            <label for="tubeRadius">Tube Radius:</label>
+            <input type="range" id="tubeRadius" min="0.01" max="0.1" step="0.01" value="0.03" />
+            <span id="radiusValue">0.03</span>
+        </div>
+        <div>
+            <label for="cubeSizeInput">Cube Size:</label>
+            <input type="range" id="cubeSizeInput" min="1" max="10" step="0.5" value="5" />
+            <span id="cubeSizeValue">5</span>
+        </div>
+        <div>
+            <label for="seedInput">Random Seed:</label>
+            <input type="number" id="seedInput" min="1" max="9999" value="42" />
+        </div>
+        <button id="generateBtn">Generate New Path</button>
+        <button id="exportSTL">Export STL</button>
+        <div>
+            <label for="viewPreset">View Preset:</label>
+            <select id="viewPreset">
+                <option value="perspective">Perspective</option>
+                <option value="front">Front</option>
+                <option value="side">Side</option>
+                <option value="top">Top</option>
+                <option value="corner">Corner</option>
+            </select>
+        </div>
+        <div>
+            <button id="toggleCube">Toggle Cube Visibility</button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.158.0/three.min.js"></script>
+    <script type="module">
+        import { OrbitControls } from 'https://unpkg.com/three@0.158.0/examples/jsm/controls/OrbitControls.js';
+        import { STLExporter } from 'https://unpkg.com/three@0.158.0/examples/jsm/exporters/STLExporter.js';
+
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x111111); // Dark background
+        
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x111111);
+        document.body.appendChild(renderer.domElement);
+        
+        // Check for WebGL support
+        if (!renderer.capabilities.isWebGL) {
+            document.getElementById('info').innerHTML = 'WebGL not supported! Please try a different browser.';
+            document.getElementById('controls').style.display = 'none';
+            throw new Error('WebGL not supported');
+        }
+
+        // Add controls
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+
+        // Add lights
+        const ambientLight = new THREE.AmbientLight(0x404040);
+        scene.add(ambientLight);
+        
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(1, 1, 1);
+        scene.add(directionalLight);
+
+        // Variables
+        let path = [];
+        let tubeMesh;
+        let cubeHelper;
+        let cubeSize = 5;
+        let pathSegments = 30;
+        let tubeRadius = 0.03;
+        let randomSeed = 42;
+
+        // Create a seeded random number generator
+        function seededRandom() {
+            let seed = randomSeed;
+            return function() {
+                seed = (seed * 9301 + 49297) % 233280;
+                return seed / 233280;
+            };
+        }
+
+        // Generate 3D path with 90-degree turns
+        function generatePath() {
+            console.log("Generating path...");
+            // Remove old path
+            if (tubeMesh) {
+                scene.remove(tubeMesh);
+                tubeMesh.geometry.dispose();
+                tubeMesh.material.dispose();
+            }
+            
+            const random = seededRandom();
+            path = [];
+            
+            // Start in the middle of the cube
+            const start = new THREE.Vector3(0, 0, 0);
+            path.push(start.clone());
+            
+            // Set of visited points to avoid self-intersection
+            const visited = new Set();
+            visited.add(`${start.x},${start.y},${start.z}`);
+            
+            // Possible directions (along x, y, z axes)
+            const directions = [
+                new THREE.Vector3(1, 0, 0),
+                new THREE.Vector3(-1, 0, 0),
+                new THREE.Vector3(0, 1, 0),
+                new THREE.Vector3(0, -1, 0),
+                new THREE.Vector3(0, 0, 1),
+                new THREE.Vector3(0, 0, -1)
+            ];
+            
+            // Keep track of the current direction to ensure 90-degree turns
+            let lastDirection = directions[Math.floor(random() * 6)];
+            
+            // Generate path segments
+            for (let i = 0; i < pathSegments; i++) {
+                // Find valid directions (perpendicular to the last direction)
+                const validDirections = directions.filter(dir => {
+                    // Must be perpendicular to last direction (dot product = 0)
+                    return Math.abs(dir.dot(lastDirection)) < 0.1;
+                });
+                
+                if (validDirections.length === 0) break;
+                
+                // Choose a random valid direction
+                const dirIndex = Math.floor(random() * validDirections.length);
+                const newDirection = validDirections[dirIndex];
+                
+                // Determine segment length (between 0.5 and 1.5 units)
+                const segmentLength = 0.5 + random() * 1.0;
+                
+                // Calculate new position
+                const lastPos = path[path.length - 1];
+                const newPos = lastPos.clone().add(
+                    newDirection.clone().multiplyScalar(segmentLength)
+                );
+                
+                // Check if the new position is within the cube bounds
+                if (Math.abs(newPos.x) > cubeSize/2 || 
+                    Math.abs(newPos.y) > cubeSize/2 || 
+                    Math.abs(newPos.z) > cubeSize/2) {
+                    continue; // Skip this segment if it goes outside the cube
+                }
+                
+                // Check if the new position has been visited
+                const posKey = `${Math.round(newPos.x*10)/10},${Math.round(newPos.y*10)/10},${Math.round(newPos.z*10)/10}`;
+                if (visited.has(posKey)) {
+                    continue; // Skip this segment if position already visited
+                }
+                
+                // Add the new position to the path
+                path.push(newPos);
+                visited.add(posKey);
+                lastDirection = newDirection;
+            }
+            
+            // Create the tube geometry from the path
+            if (path.length < 2) {
+                console.log("Not enough path points to create a tube");
+                return;
+            }
+            
+            console.log(`Path generated with ${path.length} points`);
+            
+            const curve = new THREE.CatmullRomCurve3(path);
+            const tubeGeometry = new THREE.TubeGeometry(
+                curve,
+                path.length * 10, // tubular segments
+                tubeRadius,
+                8, // radial segments
+                false // closed
+            );
+            
+            const tubeMaterial = new THREE.MeshStandardMaterial({
+                color: 0x00ff00,
+                metalness: 0.3,
+                roughness: 0.5
+            });
+            
+            tubeMesh = new THREE.Mesh(tubeGeometry, tubeMaterial);
+            scene.add(tubeMesh);
+            
+            // Display path points for debugging
+            /*
+            path.forEach(point => {
+                const pointGeometry = new THREE.SphereGeometry(0.05, 8, 8);
+                const pointMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+                const pointMesh = new THREE.Mesh(pointGeometry, pointMaterial);
+                pointMesh.position.copy(point);
+                scene.add(pointMesh);
+            });
+            */
+        }
+
+        // Create cube boundary helper
+        function createCubeHelper() {
+            if (cubeHelper) scene.remove(cubeHelper);
+            
+            const geometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+            const material = new THREE.MeshBasicMaterial({
+                color: 0xffffff,
+                wireframe: true,
+                transparent: true,
+                opacity: 0.2
+            });
+            
+            cubeHelper = new THREE.Mesh(geometry, material);
+            scene.add(cubeHelper);
+        }
+
+        // Initialize scene
+        function init() {
+            console.log("Initializing scene...");
+            createCubeHelper();
+            generatePath();
+            
+            // Set initial camera position
+            camera.position.set(cubeSize * 1.5, cubeSize * 1.5, cubeSize * 1.5);
+            camera.lookAt(0, 0, 0);
+            
+            // Force first render
+            renderer.render(scene, camera);
+            console.log("Initial render complete");
+        }
+
+        // Export to STL
+        function exportSTL() {
+            if (!tubeMesh) return;
+            
+            const exporter = new STLExporter();
+            const result = exporter.parse(tubeMesh, { binary: true });
+            
+            // Create download link
+            const blob = new Blob([result], { type: 'application/octet-stream' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'orthogonal_path.stl';
+            link.click();
+        }
+
+        // Update camera views
+        function setView(preset) {
+            switch(preset) {
+                case 'front':
+                    camera.position.set(0, 0, cubeSize * 1.5);
+                    break;
+                case 'side':
+                    camera.position.set(cubeSize * 1.5, 0, 0);
+                    break;
+                case 'top':
+                    camera.position.set(0, cubeSize * 1.5, 0);
+                    break;
+                case 'corner':
+                    camera.position.set(cubeSize, cubeSize, cubeSize);
+                    break;
+                case 'perspective':
+                default:
+                    camera.position.set(cubeSize * 1.5, cubeSize * 1.5, cubeSize * 1.5);
+                    break;
+            }
+            camera.lookAt(0, 0, 0);
+            controls.update();
+        }
+
+        // Event listeners
+        document.getElementById('generateBtn').addEventListener('click', () => {
+            pathSegments = parseInt(document.getElementById('pathSegments').value);
+            tubeRadius = parseFloat(document.getElementById('tubeRadius').value);
+            cubeSize = parseFloat(document.getElementById('cubeSizeInput').value);
+            randomSeed = parseInt(document.getElementById('seedInput').value);
+            
+            createCubeHelper();
+            generatePath();
+        });
+
+        document.getElementById('exportSTL').addEventListener('click', exportSTL);
+
+        document.getElementById('pathSegments').addEventListener('input', function() {
+            document.getElementById('segmentsValue').textContent = this.value;
+        });
+
+        document.getElementById('tubeRadius').addEventListener('input', function() {
+            document.getElementById('radiusValue').textContent = this.value;
+        });
+
+        document.getElementById('cubeSizeInput').addEventListener('input', function() {
+            document.getElementById('cubeSizeValue').textContent = this.value;
+        });
+
+        document.getElementById('viewPreset').addEventListener('change', function() {
+            setView(this.value);
+        });
+
+        document.getElementById('toggleCube').addEventListener('click', function() {
+            if (cubeHelper) {
+                cubeHelper.visible = !cubeHelper.visible;
+            }
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // Start everything
+        window.addEventListener('DOMContentLoaded', (event) => {
+            try {
+                console.log("DOM loaded, initializing application");
+                init();
+                animate();
+            } catch (e) {
+                console.error("Error during initialization:", e);
+                document.getElementById('info').textContent = "Error loading 3D scene. Check console for details.";
+            }
+        });
+
+        // Initialize immediately if document is already loaded
+        if (document.readyState === "complete" || document.readyState === "interactive") {
+            console.log("Document already loaded, initializing now");
+            setTimeout(() => {
+                try {
+                    init();
+                    animate();
+                } catch (e) {
+                    console.error("Error during initialization:", e);
+                    document.getElementById('info').textContent = "Error loading 3D scene. Check console for details.";
+                }
+            }, 100);
+        }
+    </script>
+</body>
+</html>
